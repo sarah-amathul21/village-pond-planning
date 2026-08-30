@@ -27,6 +27,20 @@ class GridMetadata(BaseModel):
     source_contour_lines: int
 
 
+class RainfallInfo(BaseModel):
+    annual_rainfall_mm: float
+    years_averaged: int
+    source: str
+
+
+class SizingInfo(BaseModel):
+    runoff_coefficient: float
+    runoff_volume_m3: float
+    recommended_depth_m: float
+    storage_capacity_m3: float
+    assumptions: str
+
+
 class CatchmentResponse(BaseModel):
     pond_location: PondLocation
     catchment_area_m2: float
@@ -35,4 +49,12 @@ class CatchmentResponse(BaseModel):
     catchment_boundary_geojson: dict[str, Any]
     elevation_stats: ElevationStats
     grid: GridMetadata
+    rainfall: RainfallInfo | None = Field(
+        default=None,
+        description="Historical annual rainfall at the pond location. Omitted if the rainfall API was unreachable.",
+    )
+    sizing: SizingInfo | None = Field(
+        default=None,
+        description="Runoff volume and recommended pond dimensions. Omitted if rainfall data was unavailable.",
+    )
     method: str = "D8 flow direction + flow accumulation, DEM interpolated from contour vertices"

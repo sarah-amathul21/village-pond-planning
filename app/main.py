@@ -20,16 +20,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from .dem import build_dem
 from .geometry import catchment_polygon_geojson
 from .kml_parser import parse_contours
+from .rainfall import fetch_annual_rainfall
 from .schemas import (
     CatchmentResponse,
     ElevationStats,
     GridMetadata,
     PondLocation,
+    RainfallInfo,
+    SizingInfo,
 )
+from .sizing import estimate_pond_sizing
 from .terrain import analyze
 
 app = FastAPI(
-    title="Village Pond Planning API",
+    title="Village Pond Planning API - Phase 2",
     description="Analyzes a contour map (KML/KMZ) and returns catchment information for pond siting.",
     version="0.2.0",
 )
@@ -89,6 +93,27 @@ async def find_catchment(file: UploadFile = File(...)):
 
     boundary_geojson = catchment_polygon_geojson(dem, result.catchment_mask)
 
+    # Bonus (not required this phase): historical rainfall + runoff/sizing
+    # estimate. Best-effort -- if the rainfall API is unreachable, these
+    # fields are simply omitted rather than failing the whole request.
+    rainfall_info = None
+    sizing_info = None
+    rain_stats = fetch_annual_rainfall(pond_lat, pond_lon)
+    if rain_stats is not None:
+        rainfall_info = RainfallInfo(
+            annual_rainfall_mm=rain_stats.annual_rainfall_mm,
+            years_averaged=rain_stats.years_averaged,
+            source=rain_stats.source,
+        )
+        sizing = estimate_pond_sizing(catchment_area_m2, rain_stats.annual_rainfall_mm)
+        sizing_info = SizingInfo(
+            runoff_coefficient=sizing.runoff_coefficient,
+            runoff_volume_m3=sizing.runoff_volume_m3,
+            recommended_depth_m=sizing.recommended_depth_m,
+            storage_capacity_m3=sizing.storage_capacity_m3,
+            assumptions=sizing.assumptions,
+        )
+
     response = CatchmentResponse(
         pond_location=PondLocation(lat=pond_lat, lon=pond_lon, elevation_m=pond_elev),
         catchment_area_m2=round(catchment_area_m2, 1),
@@ -109,6 +134,8 @@ async def find_catchment(file: UploadFile = File(...)):
             source_contour_points=n_points,
             source_contour_lines=parsed.n_lines,
         ),
+        rainfall=rainfall_info,
+        sizing=sizing_info,
     )
 
     elapsed = time.time() - t0
