@@ -29,7 +29,7 @@ from .schemas import (
 from .terrain import analyze
 
 app = FastAPI(
-    title="Village Pond Planning API - Phase 2",
+    title="Village Pond Planning API",
     description="Analyzes a contour map (KML/KMZ) and returns catchment information for pond siting.",
     version="0.2.0",
 )
