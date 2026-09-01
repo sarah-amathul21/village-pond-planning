@@ -1,13 +1,58 @@
 # Village Pond Planning System — Phase 2
 
-Backend API that accepts a contour map (KML/KMZ), analyzes the terrain, and
-returns catchment information for pond siting.
+Backend API that accepts a contour map (KML/KMZ), analyzes the terrain, identifies a suitable pond location, and estimates its catchment area.
+
+## Features
+
+- Upload contour maps in KML or KMZ format
+- Extract contour elevations and coordinates automatically
+- Build a Digital Elevation Model (DEM) from contour data
+- Analyze terrain using the D8 flow-direction algorithm
+- Calculate flow accumulation
+- Automatically identify a suitable pond location
+- Delineate the upstream catchment area
+- Return structured results as JSON
+- Return the catchment boundary as GeoJSON
+- Interactive API documentation using Swagger UI
+- Bonus: rainfall analysis and preliminary pond sizing
+
+## Technology Used
+
+- Python
+- FastAPI
+- NumPy
+- SciPy
+- Shapely
+- lxml
+- Pydantic
+
+## Project Structure
+
+```text
+app/
+├── main.py          # FastAPI application and API route
+├── kml_parser.py    # KML/KMZ contour parsing
+├── dem.py           # DEM interpolation and smoothing
+├── terrain.py       # D8 terrain and catchment analysis
+├── geometry.py       # Catchment boundary to GeoJSON
+├── schemas.py        # API response schemas
+├── rainfall.py       # Optional historical rainfall analysis
+└── sizing.py         # Optional pond sizing estimate
+
+contours_1m.kml      # Sample contour map
+demo_output.png      # Terrain and flow accumulation visualization
+requirements.txt
+```
 
 ## Installation
 
 ```bash
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+git clone https://github.com/sarah-amathul21/village-pond-planning.git
+cd village-pond-planning
+
+python3 -m venv venv
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
@@ -17,153 +62,117 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-Interactive API docs (Swagger UI) are then available at
-`http://localhost:8000/docs`.
+API server:
 
-## Demo — using the provided sample contour map
-
-```bash
-curl -X POST "http://localhost:8000/findCatchment" \
-     -F "file=@contours_1m.kml"
+```text
+http://127.0.0.1:8000
 ```
 
-or via Swagger UI: open `/docs`, expand `POST /findCatchment`,
-upload `contours_1m.kml`, and execute.
+Interactive API documentation:
 
----
+```text
+http://127.0.0.1:8000/docs
+```
 
-## Methodology
+## API Endpoint
 
-### 1. Parsing (`app/kml_parser.py`)
-The uploaded contour map is one Placemark per contour line, with the
-elevation value stored in each Placemark's `<name>`. KMZ files are unzipped
-in memory first (a KMZ is just a zip archive containing a `.kml`). Every
-vertex of every contour line is extracted as a `(lon, lat, elevation)`
-point. This produces a scattered point cloud — nothing here assumes a
-specific village, coordinate range, or elevation range, so any contour KML
-following the same Placemark/name convention parses the same way.
+### POST `/findCatchment`
 
-### 2. DEM construction (`app/dem.py`)
-Terrain algorithms need elevation at every cell of a regular grid, but
-contour lines only give elevation *along* the line. The scattered points
-are interpolated onto a regular grid using linear (Delaunay-based)
-interpolation — the standard approach for contour-to-DEM conversion.
-Grid resolution is derived from the data's own bounding box (not hardcoded),
-so a larger or smaller input area gets an appropriately scaled grid.
+Upload a contour map and receive terrain and catchment information.
 
-A light Gaussian smoothing pass is applied afterward. This addresses a
-known artifact of interpolating a DEM purely from dense contour vertices:
-near-duplicate points along each line otherwise create small "staircase"
-steps between contour bands, which fragment single-cell flow decisions
-into many spurious micro-sinks. Smoothing preserves the real valley/ridge
-shape (which spans many cells) while removing single-cell noise.
+Example:
 
-### 3. Terrain analysis (`app/terrain.py`)
-A self-contained D8 implementation (no external hydrology library, so every
-step is inspectable):
+```bash
+curl -X POST "http://127.0.0.1:8000/findCatchment" \
+  -F "file=@contours_1m.kml"
+```
 
-- **Flow direction** — for each grid cell, find the neighbor (of its 8)
-  with the steepest downhill slope; that's where its water flows. A cell
-  with no downhill neighbor is a *sink* (local depression).
-- **Flow accumulation** — process cells from highest to lowest elevation
-  (a valid order since water only flows downhill) and propagate each
-  cell's accumulated count to its downstream neighbor. A cell's final
-  count = 1 + everything that drains through it — i.e. its upstream
-  catchment size.
-- **Pond site selection** — the sink with the largest flow accumulation,
-  excluding a margin at the outer boundary (accumulation there is
-  artificially truncated by the edge of the input data, not by real
-  terrain).
-- **Catchment delineation** — reverse-BFS over the flow-direction graph
-  from the chosen pond cell, recovering every cell that drains into it.
+Accepted file formats:
 
-### 4. Catchment geometry (`app/geometry.py`)
-The boolean catchment mask (grid cells) is converted to a lon/lat polygon
-by unioning each catchment cell's box footprint with Shapely, returned as
-GeoJSON.
+- `.kml`
+- `.kmz`
 
----
+## Catchment Estimation Approach
+
+The uploaded contour map is analyzed using the following workflow:
+
+1. **Contour Parsing**  
+   Contour line coordinates and elevation values are extracted from the uploaded KML/KMZ file.
+
+2. **DEM Generation**  
+   The contour vertices are interpolated into a regular Digital Elevation Model using linear interpolation. Light Gaussian smoothing is applied to reduce small interpolation artifacts.
+
+3. **D8 Flow Direction**  
+   For each DEM cell, water is routed toward the neighboring cell with the steepest downhill slope.
+
+4. **Flow Accumulation**  
+   Upstream cells are accumulated to identify locations receiving water from larger areas.
+
+5. **Pond Site Selection**  
+   Interior terrain depressions or sinks with high flow accumulation are considered as suitable pond locations.
+
+6. **Catchment Delineation**  
+   The flow network is traced upstream from the selected pond site to identify all cells draining toward it.
+
+7. **Catchment Area Estimation**  
+   The catchment area is calculated from the number of catchment cells and DEM cell area.
+
+The implementation derives all terrain information from the uploaded file and does not hard-code coordinates or results from the sample contour map.
+
+## Demonstration with Provided Sample Map
+
+Using the provided `contours_1m.kml` sample map, the API successfully produced:
+
+- **Estimated catchment area:** approximately **15 hectares**
+- **Contour lines processed:** 2710
+- **Contour points processed:** 160,468
+- **Method:** DEM interpolation + D8 flow direction + flow accumulation + upstream catchment delineation
+
+The exact result may vary slightly with DEM interpolation and smoothing parameters.
+
+## API Response
+
+The API returns structured JSON containing:
+
+- Selected pond location
+- Pond elevation
+- Catchment area in square meters
+- Catchment area in hectares
+- Catchment boundary as GeoJSON
+- Catchment elevation statistics
+- DEM grid metadata
+- Optional historical rainfall information
+- Optional preliminary pond sizing estimate
+- Terrain analysis method
+
+## Demo Visualization
+
+The generated visualization shows:
+
+- **Left:** Interpolated and smoothed DEM with the delineated catchment and selected pond site
+- **Right:** Flow accumulation/drainage network with the selected pond site
+
+![Terrain Analysis Output](demo_output.png)
+
+## Extensibility
+
+The current terrain analysis pipeline can be extended with:
+
+- Land-use classification
+- Soil information
+- Existing water bodies
+- Rainfall-runoff modelling
+- Suitability constraints
+- Multiple pond-site ranking
+- Higher-resolution DEM data
+- Advanced hydrological analysis
 
 ## API Documentation
 
-### `POST /findCatchment`
+FastAPI automatically provides interactive API documentation at:
 
-Accepts a contour map and returns catchment information for the
-best-identified pond site.
-
-**Request:** `multipart/form-data`
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `file` | file | yes | `.kml` or `.kmz` contour map |
-
-**Response:** `200 OK`, `application/json`
-
-```json
-{
-  "pond_location": {
-    "lat": 21.250088,
-    "lon": 81.290039,
-    "elevation_m": 267.0
-  },
-  "catchment_area_m2": 149400.0,
-  "catchment_area_hectares": 14.94,
-  "catchment_cell_count": 568,
-  "catchment_boundary_geojson": { "type": "Polygon", "coordinates": [...] },
-  "elevation_stats": {
-    "min_m": 267.0,
-    "max_m": 286.0,
-    "mean_m": 275.8,
-    "relief_m": 19.0
-  },
-  "grid": {
-    "rows": 163,
-    "cols": 200,
-    "cell_size_m_x": 16.21,
-    "cell_size_m_y": 16.23,
-    "source_contour_points": 160468,
-    "source_contour_lines": 2710
-  },
-  "method": "D8 flow direction + flow accumulation, DEM interpolated from contour vertices"
-}
+```text
+http://127.0.0.1:8000/docs
 ```
 
-**Error responses:**
-
-| Status | Cause |
-|---|---|
-| 400 | File extension not `.kml`/`.kmz` |
-| 413 | File exceeds 25 MB |
-| 422 | File parses as XML but contains no elevation-labeled contour lines |
-
-### `GET /`
-Health check; lists available endpoints.
-
----
-
-## Extensibility (for future phases)
-
-The pipeline is split into independent, single-purpose modules so later
-phases can extend it without rewriting earlier stages:
-
-- **Land availability** (Phase 3?) plugs in as a mask applied to the DEM
-  before pond-site selection, in the same way the boundary margin already
-  excludes cells in `select_pond_site`.
-- **Rainfall/runoff sizing** consumes `catchment_area_m2` directly —
-  no changes needed upstream.
-- **Different contour sources**: `kml_parser.py` is the only file that
-  knows about KML structure; a future GeoTIFF or shapefile DEM source
-  would only need a new parser producing the same `DEM` object that
-  `terrain.py` already consumes.
-- **Grid resolution** is a parameter (`target_cells_across`), not fixed,
-  so performance/accuracy can be tuned per contour map without code changes.
-
-## Known limitations / possible improvements
-
-- The current D8 loop is plain Python (not vectorized), so runtime grows
-  with grid size — fine at 200×163 cells (~3.5s) but should be vectorized
-  or swapped for a library (e.g. `richdem`) for much larger contour maps.
-- No explicit "fill sinks" pre-processing step is applied, so minor local
-  noise still produces some small spurious sinks; the largest-catchment
-  selection rule mitigates this but a dedicated depression-filling pass
-  would make results more robust on noisier inputs.
+The `/docs` interface allows direct file upload, API testing, and inspection of the request and response schemas.
