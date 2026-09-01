@@ -106,8 +106,8 @@ def build_dem(
     if smooth_sigma_cells > 0:
         grid_elev = gaussian_filter(grid_elev, sigma=smooth_sigma_cells)
 
-    cell_size_m_x = width_m / n_cols
-    cell_size_m_y = height_m / n_rows
+    cell_size_m_x = width_m / (n_cols - 1)
+    cell_size_m_y = height_m / (n_rows - 1)
 
     return DEM(
         elevation=grid_elev,
