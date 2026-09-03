@@ -7,7 +7,7 @@ Run locally:
 
 Then POST a file to /findCatchment, e.g.:
     curl -X POST "http://localhost:8000/findCatchment" \
-         -F "file=@contours_1m.kml"
+         -F "contour_map=@contours_1m.kml"
 """
 from __future__ import annotations
 
@@ -55,14 +55,14 @@ def root():
 
 
 @app.post("/findCatchment", response_model=CatchmentResponse)
-async def find_catchment(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(ALLOWED_EXTENSIONS):
+async def find_catchment(contour_map: UploadFile = File(...)):
+    if not contour_map.filename.lower().endswith(ALLOWED_EXTENSIONS):
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported file type. Expected one of {ALLOWED_EXTENSIONS}.",
         )
 
-    raw = await file.read()
+    raw = await contour_map.read()
     if len(raw) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -72,7 +72,7 @@ async def find_catchment(file: UploadFile = File(...)):
 
     # 1. Parse contour lines -> scattered elevation points
     try:
-        parsed = parse_contours(file.filename, raw)
+        parsed = parse_contours(contour_map.filename, raw)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
