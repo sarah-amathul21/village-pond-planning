@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Village Pond Catchment Analyzer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f7f5;
+      margin: 0;
+      padding: 40px;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: auto;
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+    }
+
+    h1 { color: #176b4a; }
+
+    input, button {
+      margin-top: 15px;
+      padding: 12px;
+      font-size: 16px;
+    }
+
+    button {
+      background: #176b4a;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    pre {
+      background: #f1f1f1;
+      padding: 15px;
+      overflow: auto;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Village Pond Catchment Analyzer</h1>
+    <p>Upload a KML or KMZ contour map to analyze the terrain and estimate a suitable pond location.</p>
+
+    <input type="file" id="contourMap" accept=".kml,.kmz">
+    <br>
+    <button onclick="analyze()">Analyze Catchment</button>
+
+    <h2>Result</h2>
+    <pre id="result">Upload a contour map and click Analyze.</pre>
+  </div>
+
+  <script>
+    async function analyze() {
+      const file = document.getElementById("contourMap").files[0];
+      const result = document.getElementById("result");
+
+      if (!file) {
+        result.textContent = "Please select a KML or KMZ file.";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("contour_map", file);
+
+      result.textContent = "Analyzing terrain...";
+
+      try {
+        const response = await fetch("http://127.0.0.1:3230/findCatchment", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Analysis failed");
+        }
+
+        result.textContent =
+          "Pond Location:\n" +
+          "Latitude: " + data.pond_location.lat + "\n" +
+          "Longitude: " + data.pond_location.lon + "\n" +
+          "Elevation: " + data.pond_location.elevation_m.toFixed(2) + " m\n\n" +
+          "Catchment Area: " + data.catchment_area_hectares + " hectares\n" +
+          "Catchment Area: " + data.catchment_area_m2.toFixed(2) + " m²\n\n" +
+          "Annual Rainfall: " + data.rainfall.annual_rainfall_mm + " mm\n\n" +
+          "Recommended Pond Depth: " + data.sizing.recommended_depth_m + " m\n" +
+          "Storage Capacity: " + data.sizing.storage_capacity_m3.toFixed(2) + " m³";
+
+      } catch (error) {
+        result.textContent = "Error: " + error.message;
+      }
+    }
+  </script>
+</body>
+</html>
