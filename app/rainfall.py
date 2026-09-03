@@ -13,7 +13,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-import httpx
+try:
+    import httpx
+except ImportError:
+    httpx = None
 
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 
@@ -29,6 +32,9 @@ def fetch_annual_rainfall(lat: float, lon: float, years: int = 5) -> RainfallSta
     """Fetch daily precipitation for the last `years` years at (lat, lon)
     and return the average annual total. Returns None if the API call
     fails or returns no usable data -- callers should degrade gracefully."""
+    if httpx is None:
+        return None
+
     end = date.today().replace(day=1)
     start = end.replace(year=end.year - years)
 
