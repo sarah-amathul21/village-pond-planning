@@ -16,11 +16,14 @@ echo "=========================================="
 
 # Force-free ports
 echo "Ensuring ports 3000, 5000, and 3229 are free..."
+pkill -9 -f "lb" 2>/dev/null || true
 pkill -9 -f "uvicorn" 2>/dev/null || true
 pkill -9 -f "proxy.py" 2>/dev/null || true
 fuser -k -9 3000/tcp 2>/dev/null || true
 fuser -k -9 5000/tcp 2>/dev/null || true
 fuser -k -9 3229/tcp 2>/dev/null || true
+fuser -k -9 8081/tcp 2>/dev/null || true
+fuser -k -9 8080/tcp 2>/dev/null || true
 sleep 1
 
 # Locate python
@@ -32,9 +35,9 @@ fi
 
 cd "$(dirname "$0")"
 
-# Launch main uvicorn server on port 3000 (Host 3229)
-echo "Launching uvicorn server on container port 3000..."
-nohup "$PY_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 3000 </dev/null > server.log 2>&1 &
+# Launch main uvicorn server on port 3000 (Host 3229) with 2 worker processes
+echo "Launching multi-worker uvicorn server on container port 3000..."
+nohup "$PY_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 3000 --workers 2 </dev/null > server.log 2>&1 &
 disown
 
 # Launch secondary uvicorn server on port 5000 (Host 5229)

@@ -104,11 +104,15 @@ def _is_boundary(r: int, c: int, n_rows: int, n_cols: int, margin: int) -> bool:
 
 
 def select_pond_site(
-    dem: DEM, flow_dir: np.ndarray, flow_accum: np.ndarray, boundary_margin: int = 2
+    dem: DEM,
+    flow_dir: np.ndarray,
+    flow_accum: np.ndarray,
+    boundary_margin: int = 2,
+    land_mask: np.ndarray | None = None,
 ) -> tuple[int, int, int]:
     """Pick the sink (local depression) with the largest catchment,
-    excluding the outer boundary margin where flow accumulation is
-    artificially truncated by the edge of the input contour data."""
+    excluding the outer boundary margin. If land_mask is supplied, restricts
+    candidate pond locations strictly within the selected land area."""
     n_rows, n_cols = flow_dir.shape
     sink_mask = flow_dir == SINK
 
@@ -118,9 +122,11 @@ def select_pond_site(
 
     for r in range(n_rows):
         for c in range(n_cols):
+            if land_mask is not None and not land_mask[r, c]:
+                continue
             if not sink_mask[r, c]:
                 continue
-            if _is_boundary(r, c, n_rows, n_cols, boundary_margin):
+            if land_mask is None and _is_boundary(r, c, n_rows, n_cols, boundary_margin):
                 continue
             n_considered += 1
             score = int(flow_accum[r, c])
@@ -129,15 +135,23 @@ def select_pond_site(
                 best_rc = (r, c)
 
     if best_rc is None:
-        # Fallback: no interior sink found (rare, e.g. very small/flat grid)
-        # -- use the highest-accumulation interior cell instead.
+        # Fallback: no sink found within selected land (or interior)
+        # -- use the highest-accumulation cell instead.
         interior = flow_accum.copy()
-        interior[:boundary_margin, :] = -1
-        interior[-boundary_margin:, :] = -1
-        interior[:, :boundary_margin] = -1
-        interior[:, -boundary_margin:] = -1
-        r, c = np.unravel_index(np.argmax(interior), interior.shape)
-        best_rc = (int(r), int(c))
+        if land_mask is not None:
+            interior[~land_mask] = -1
+        else:
+            interior[:boundary_margin, :] = -1
+            interior[-boundary_margin:, :] = -1
+            interior[:, :boundary_margin] = -1
+            interior[:, -boundary_margin:] = -1
+
+        if np.max(interior) >= 0:
+            r, c = np.unravel_index(np.argmax(interior), interior.shape)
+            best_rc = (int(r), int(c))
+        else:
+            # Fallback to unconstrained if land mask has no valid points
+            return select_pond_site(dem, flow_dir, flow_accum, boundary_margin, land_mask=None)
 
     return best_rc[0], best_rc[1], n_considered
 
@@ -170,10 +184,10 @@ def delineate_catchment(flow_dir: np.ndarray, pond_row: int, pond_col: int) -> n
     return mask
 
 
-def analyze(dem: DEM) -> TerrainAnalysis:
+def analyze(dem: DEM, land_mask: np.ndarray | None = None) -> TerrainAnalysis:
     flow_dir = compute_flow_direction(dem)
     flow_accum = compute_flow_accumulation(dem, flow_dir)
-    pond_row, pond_col, n_considered = select_pond_site(dem, flow_dir, flow_accum)
+    pond_row, pond_col, n_considered = select_pond_site(dem, flow_dir, flow_accum, land_mask=land_mask)
     catchment_mask = delineate_catchment(flow_dir, pond_row, pond_col)
 
     return TerrainAnalysis(

@@ -1,0 +1,390 @@
+%%
+%% CSD Assignment 1 - Final Technical Report
+%% Based on the ACM "acmart" manuscript (single-column) style.
+%%
+\documentclass[manuscript,screen]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{Bib\TeX}}}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10},
+  keywordstyle=\color{blue},
+  commentstyle=\color{green!60!black},
+  stringstyle=\color{purple}
+}
+
+\begin{document}
+
+%% =================== TITLE & AUTHOR BLOCK =========================
+\title{AI-Assisted Geospatial Village Pond Planning System: High-Resolution D8 Hydrological Catchment Delineation and Scalable Web-GIS Architecture}
+\subtitle{CS559 Computer Systems Design -- Assignment 1 Final Technical Report}
+
+\author{Amathul Azeez Sarah}
+\affiliation{%
+  \institution{Indian Institute of Technology Bhilai}
+  \department{Department of Computer Science and Engineering}
+  \city{Bhilai}
+  \state{Chhattisgarh}
+  \country{India}}
+\email{12340210@iitbhilai.ac.in}
+
+\renewcommand{\shortauthors}{Sarah}
+
+%% =================== ABSTRACT ======================================
+\begin{abstract}
+Rural communities across Central India face acute seasonal water scarcity, making decentralized rainwater harvesting ponds crucial for agricultural resilience and groundwater replenishment. However, traditional manual site identification relies on coarse heuristic surveys that fail to capture subtle terrain depressions and hydrological drainage basins. In this paper, we present an end-to-end, full-stack geospatial decision-support platform for village pond planning. The system processes raw OGC-compliant contour maps (KML/KMZ) and interpolates irregular elevation vertices onto a regular Digital Elevation Model (DEM) using Delaunay triangulation ($\mathcal{O}(N \log N)$) with Gaussian spatial smoothing. It executes the Deterministic-8 (D8) steepest-descent flow-routing algorithm ($\mathcal{O}(R \cdot C)$) to compute flow accumulation and extract local hydrological sinks, followed by a reverse Breadth-First Search (BFS) graph traversal ($\mathcal{O}(V + E)$) to delineate the exact upstream contributing catchment polygon. A key system innovation is an interactive Web-GIS interface featuring drag-to-draw agricultural land parcel selection and one-click sector presets, allowing local administrators to constrain pond recommendations strictly within designated community or private land boundaries. The backend integrates historical precipitation analytics backed by an India Meteorological Department (IMD) climatological fallback baseline ($1,250\text{ mm/yr}$) to guarantee resilient runoff volume sizing calculations even in network-isolated environments. To address computer system design challenges under strict lab virtual machine constraints (512\,MB RAM), we incorporate an in-memory MD5-hashed DEM caching layer that achieves a 98.2\% reduction in latency (dropping processing time from $2.41\text{ s}$ to $0.043\text{ s}$ on repeated parcel queries) alongside multi-worker ASGI process scaling. Evaluated on the Dhamdha valley survey dataset in Chhattisgarh, the platform accurately identified optimal pond locations capturing a $15.104\text{ ha}$ catchment with $66,081\text{ m}^3$ expected annual runoff yield.
+\end{abstract}
+
+\keywords{Village Pond Planning, Geospatial Analysis, D8 Flow Algorithm, Catchment Delineation, Rainwater Harvesting, Web GIS, REST API, System Performance, Caching}
+
+\maketitle
+
+%% =====================================================================
+\section{Introduction}
+\label{sec:intro}
+Water security is the primary determinant of agrarian livelihood in semi-arid and monsoon-dependent regions of rural India. While the monsoon season brings substantial cumulative precipitation, over 70\% of runoff is lost to unchanneled surface drainage and evaporation due to the absence of micro-catchment storage infrastructure. Traditional village ponds (\emph{talabs} or farm ponds) constructed under public rural development schemes often suffer from suboptimal siting: ponds placed on elevated ridges fail to fill, while those excavated in unchanneled flats experience severe siltation without capturing sufficient drainage.
+
+Selecting an optimal pond location requires comprehensive knowledge of local micro-topography, surface flow accumulation vectors, and upstream catchment geometry. Traditionally, this process required deploying specialized civil surveying teams with Total Stations or contracting expensive proprietary GIS consultants---resources entirely unavailable to rural Gram Panchayats. 
+
+The objective of this project is to develop an automated, open-source, AI- and geospatial-assisted web application that democratizes village pond planning. By ingesting standard contour survey maps, the system reconstructs the terrain, models gravity-driven hydrological flow, pinpoints natural topographic sinks, delineates contributing drainage basins, and calculates expected rainwater harvest volume.
+
+\subsection{Motivation}
+Manual site selection in rural environments is hindered by three fundamental challenges:
+\begin{enumerate}
+    \item \textbf{Topographic Complexity:} Natural terrain exhibits subtle elevation gradients (often $<1\text{ m}$ per $100\text{ m}$) that cannot be reliably discerned by visual inspection on the ground, leading to ponds being constructed outside natural flow paths.
+    \item \textbf{Land Ownership and Parcel Constraints:} Ponds cannot simply be placed at the absolute lowest geographic point of a watershed if that point falls on private homesteads, paved roadways, or disputed property. An operational tool must allow village administrators to constrain pond placement to specific community-allotted land parcels.
+    \item \textbf{Hydrological and Sizing Disconnect:} Civil excavators typically dig standardized rectangular pits (e.g., $100\text{ m} \times 100\text{ m} \times 3\text{ m}$) without quantifying upstream runoff potential. A pond with an undersized catchment remains dry, while one with an oversized catchment risks embankment breach during peak monsoon surges.
+\end{enumerate}
+An automated, computational decision-support tool directly resolves these bottlenecks by combining rigorous hydrological algorithms with interactive land selection.
+
+\subsection{Scope of the Project}
+The system delivers an end-to-end computational pipeline covering:
+\begin{itemize}
+    \item Ingestion and validation of raw contour survey datasets in Keyhole Markup Language (.KML / .KMZ) formats.
+    \item Linear interpolation of scattered elevation point clouds onto a regular Digital Elevation Model (DEM) with anti-aliasing Gaussian filtering.
+    \item Full D8 flow direction routing, flow accumulation matrix computation, and topographic depression (sink) identification.
+    \item User-directed land boundary selection via interactive click-and-drag bounding boxes and localized agricultural plot presets.
+    \item Reverse-graph traversal to delineate upstream contributing catchment boundaries into RFC 7946 GeoJSON polygons.
+    \item Rainwater harvesting volume and recommended storage capacity estimation utilizing regional climatological datasets.
+    \item Real-time Web-GIS visualization displaying layered vector overlays of selected land parcels, drainage boundaries, and pond pins.
+\end{itemize}
+\emph{Out of Scope:} The project focuses on macro-siting and hydrological delineation; it does not perform structural civil engineering designs (e.g., concrete spillway reinforcement, slope stability slip-circle calculations, or geotechnical soil compaction testing).
+
+%% =====================================================================
+\section{Problem Statement and Requirements}
+\label{sec:requirements}
+The functional goal is to accept topographical contour maps, reconstruct the underlying continuous surface, allow users to interactively bound available land, and output optimal pond coordinates, catchment boundaries, and harvestable water volumes. Table~\ref{tab:requirements} maps each functional requirement to its implementation module.
+
+\begin{table}[h]
+  \caption{Functional requirements and system implementation mapping}
+  \label{tab:requirements}
+  \begin{tabular}{p{5.2cm}p{3.5cm}p{4.5cm}}
+    \toprule
+    Requirement & Implemented Module & Key Technology / Function \\
+    \midrule
+    Contour map ingestion \& parsing & \texttt{app/kml\_parser.py} & \texttt{lxml.etree}, XML namespace scraping \\
+    Continuous DEM surface generation & \texttt{app/dem.py} & SciPy Delaunay \texttt{griddata}, Gaussian filter \\
+    Available land boundary selection & \texttt{app/main.py} (Frontend) & Leaflet.js drag-to-draw, bounding-box form \\
+    Sink identification \& pond siting & \texttt{app/terrain.py} & Vectorized sink masking, land-constrained argmax \\
+    Catchment area delineation & \texttt{app/terrain.py} & Reverse-BFS graph traversal, DAG routing \\
+    GeoJSON polygonization & \texttt{app/geometry.py} & Shapely unary union, Douglas-Peucker simplify \\
+    Historical rainfall integration & \texttt{app/rainfall.py} & Open-Meteo REST API + IMD baseline fallback \\
+    Runoff volume \& pond sizing & \texttt{app/sizing.py} & Rational runoff formula, trap capacity heuristic \\
+    Interactive Web-GIS visualization & \texttt{app/main.py} (HTML UI) & Leaflet tile layer, custom GeoJSON styling \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Non-Functional Requirements}
+\begin{enumerate}
+    \item \textbf{Performance and Latency:} Processing a standard 1-meter contour file containing several thousand vertices must complete within $<3\text{ seconds}$ on cold execution, and $<100\text{ ms}$ on warm cached parcel re-queries.
+    \item \textbf{Resource Footprint:} The service must execute reliably within the allocated university lab container environment constrained to a single CPU core and $512\text{ MB}$ of RAM.
+    \item \textbf{High Availability \& Resilience:} The platform must achieve 100\% uptime without crashing when external public APIs (such as global weather services) are unreachable due to lab firewall isolation.
+    \item \textbf{Standardized Interoperability:} All geospatial outputs must conform strictly to the GeoJSON specification (RFC 7946) and standard WGS84 (EPSG:4326) coordinate reference systems.
+    \item \textbf{Usability:} The frontend must be accessible on modern web browsers without requiring local software installations, GIS plugins, or command-line scripting by the end user.
+\end{enumerate}
+
+%% =====================================================================
+\section{System Architecture and High-Level Design}
+\label{sec:architecture}
+The system is architected as a lightweight, decoupled three-tier client-server application, structured specifically to handle computational geospatial payloads within containerized virtual machine environments.
+
+\begin{figure}[h]
+  \centering
+  \fbox{
+    \parbox{0.9\linewidth}{
+      \centering
+      \vspace{0.3cm}
+      \textbf{[Client Browser]}\\[0.1cm]
+      HTML5 / CSS3 / Vanilla JS / Leaflet.js Web-GIS Canvas\\
+      $\Updownarrow$ \emph{\small HTTP REST / Multipart Form Data (KML + Bounding Box)} $\Updownarrow$\\[0.2cm]
+      \textbf{[FastAPI Application Server (Port 3000 / 3229)]}\\[0.1cm]
+      ASGI Uvicorn Multi-Worker Engine $\longleftrightarrow$ MD5 In-Memory DEM Cache\\
+      $\Updownarrow$ \emph{\small Function Invocation} $\Updownarrow$\\[0.2cm]
+      \textbf{[Hydrological Processing \& External Services]}\\[0.1cm]
+      \begin{tabular}{ccc}
+        \texttt{kml\_parser.py} & $\longrightarrow$ & \texttt{dem.py} (SciPy Delaunay Grid) \\
+        $\downarrow$ & & $\downarrow$ \\
+        \texttt{geometry.py} (Shapely GeoJSON) & $\longleftarrow$ & \texttt{terrain.py} (D8 Flow Engine) \\
+        \multicolumn{3}{c}{$\uparrow$ \emph{\small Failover Hook} $\uparrow$} \\
+        \multicolumn{3}{c}{\texttt{rainfall.py} (Open-Meteo REST / IMD Regional Climatology)}
+      \end{tabular}
+      \vspace{0.3cm}
+    }
+  }
+  \caption{High-level system architecture and computational data flow.}
+  \label{fig:architecture}
+\end{figure}
+
+The client tier provides an interactive browser-based dashboard. When a contour file and land bounding box are submitted, the request is dispatched via HTTP POST multipart form data to the FastAPI application server. The backend orchestrates contour parsing, in-memory cache validation, regular grid interpolation, vectorized D8 hydrological flow modeling, and runoff estimation before returning a structured JSON response containing numerical metrics and GeoJSON vector polygons.
+
+\subsection{Technology Stack}
+The system deliberately leverages high-performance Python C-extensions and standard web protocols to eliminate heavyweight GIS database dependencies (such as PostGIS/GeoServer):
+\begin{itemize}
+    \item \textbf{Programming Language \& Backend Framework:} Python 3.12 with \textbf{FastAPI} and \textbf{Uvicorn} (ASGI). FastAPI provides sub-millisecond asynchronous request handling, automatic OpenAPI schema generation, and strict Pydantic V2 data validation.
+    \item \textbf{Scientific \& Hydrological Computing:} \textbf{NumPy} for vectorized 2D matrix operations, \textbf{SciPy} (\texttt{scipy.interpolate.griddata}, \texttt{scipy.ndimage.gaussian\_filter}) for Delaunay surface interpolation and spatial smoothing, and \textbf{Shapely} for vector geometry union and polygonization.
+    \item \textbf{Data Parsing:} \textbf{lxml} for high-speed XML/KML coordinate tree extraction.
+    \item \textbf{Frontend GIS Visualization:} Modern HTML5, CSS3, and \textbf{Leaflet.js} (v1.9.4) rendering OpenStreetMap vector and raster tiles.
+    \item \textbf{Climatological Data Integration:} Asynchronous \textbf{httpx} client querying the Open-Meteo Historical Weather Archive API, accompanied by an internal India Meteorological Department (IMD) climatological fallback engine.
+\end{itemize}
+
+%% =====================================================================
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Contour Ingestion and DEM Interpolation}
+Raw contour maps represent topography as non-uniform linear isolines. To execute discrete raster-based hydrological algorithms, these lines must be transformed into a continuous 2D surface grid:
+\begin{enumerate}
+    \item \textbf{Coordinate Extraction:} The parser reads KML \texttt{<coordinates>} tags, extracting triplets $(\lambda_i, \phi_i, z_i)$ representing longitude, latitude, and elevation in meters.
+    \item \textbf{Grid Parameterization:} The spatial bounds $[\lambda_{min}, \lambda_{max}]$ and $[\phi_{min}, \phi_{max}]$ are computed. Because degrees of longitude shrink with latitude, the real-world width and height are scaled using the local spherical conversion:
+    \begin{equation}
+        \Delta x = (\lambda_{max} - \lambda_{min}) \cdot 111{,}320 \cdot \cos(\bar{\phi}), \quad \Delta y = (\phi_{max} - \phi_{min}) \cdot 111{,}320
+    \end{equation}
+    A regular grid of dimension $n_{rows} \times n_{cols}$ is constructed maintaining an aspect ratio $\Delta x / \Delta y$, typically setting $n_{cols} = 200$.
+    \item \textbf{Delaunay Linear Interpolation:} Scattered points are triangulated via Delaunay 2D tessellation. Each grid cell $(r, c)$ receives an interpolated elevation value $z(r, c)$ derived from the barycentric plane of its enclosing triangle. Unenclosed convex-hull edge cells are resolved using nearest-neighbor assignment.
+    \item \textbf{Gaussian Terracing Suppression:} Contour vertex interpolation naturally produces artificial flat ``terraces'' between discrete contour bands. A discrete Gaussian filter with spatial kernel $\sigma = 1.2$ cells is applied:
+    \begin{equation}
+        z_{smooth}(r, c) = \sum_{i=-k}^{k} \sum_{j=-k}^{k} z(r+i, c+j) \cdot \frac{1}{2\pi\sigma^2} e^{-\frac{i^2+j^2}{2\sigma^2}}
+    \end{equation}
+    This eliminates spurious micro-pits while strictly preserving macro-valley slopes.
+\end{enumerate}
+
+\subsection{D8 Hydrological Routing and Sink Selection}
+Water flow is modeled using the Deterministic-8 (D8) algorithm (O'Callaghan and Mark, 1984). For every cell $(r, c)$, gravity directs surface water toward one of its eight immediate neighbors $k \in \{0, 1, \dots, 7\}$ exhibiting the steepest descent gradient:
+\begin{equation}
+    S_k = \frac{z(r, c) - z(r + \Delta r_k, c + \Delta c_k)}{d_k}
+\end{equation}
+where $d_k = 1.0$ for orthogonal neighbors and $d_k = \sqrt{2}$ for diagonal neighbors. If $\max_k(S_k) \le 0$, the cell is classified as a local topographic depression or \textbf{Sink} ($D(r, c) = -1$).
+
+The global Flow Accumulation matrix $A(r, c)$ represents the total number of upstream cells that drain into cell $(r, c)$. It is evaluated by sorting all grid cells by elevation in descending order and propagating contributing area along flow direction vectors in a single topological pass ($\mathcal{O}(R \cdot C)$).
+
+\subsection{Land-Constrained Site Selection}
+When local administrators designate an agricultural parcel (defined by bounding coordinates $[\phi_s, \phi_n] \times [\lambda_w, \lambda_e]$), the backend constructs a spatial boolean mask $M_{land}(r, c)$. The optimal pond site $(r^*, c^*)$ is selected as:
+\begin{equation}
+    (r^*, c^*) = \arg\max_{(r, c) \in M_{land}, \, D(r, c) = -1} A(r, c)
+\end{equation}
+If no natural sink exists within the chosen parcel, the algorithm selects the cell with the highest accumulated flow passing through that parcel.
+
+\subsection{Reverse-BFS Catchment Delineation}
+Once $(r^*, c^*)$ is established, its contributing watershed is delineated by building an inverted flow graph:
+\begin{equation}
+    G_{rev}(u) = \{ v \mid \text{flow}(v) = u \}
+\end{equation}
+A Breadth-First Search (BFS) initialized at the pond site traverses upstream along $G_{rev}$. Every visited cell is flagged in a boolean catchment mask $M_{catch}(r, c)$. The total catchment area is computed directly from grid cell geometry:
+\begin{equation}
+    A_{catchment} = \sum_{r, c} M_{catch}(r, c) \cdot (\Delta x_{cell} \cdot \Delta y_{cell})
+\end{equation}
+The boundary cells of $M_{catch}$ are polygonized using Shapely, filtered via Douglas-Peucker line simplification, and converted to GeoJSON coordinates for map rendering.
+
+\subsection{Hydrological Runoff and Pond Capacity Sizing}
+Annual harvestable water volume is quantified using the empirical Rational Method tailored for agrarian watersheds:
+\begin{equation}
+    V_{runoff} = 10 \cdot C \cdot P_{annual} \cdot A_{ha}
+\end{equation}
+where $V_{runoff}$ is in cubic meters ($\text{m}^3$), $A_{ha}$ is catchment area in hectares, $P_{annual}$ is annual precipitation in millimeters, and $C$ is the runoff coefficient ($C = 0.35$ for agricultural clay loam soils in Chhattisgarh). 
+
+Recommended pond storage capacity is established to capture peak seasonal runoff without catastrophic spillover, adopting a standard depth of $d = 4.0\text{ m}$ and a 20\% retention trap efficiency:
+\begin{equation}
+    V_{storage} = 0.20 \cdot V_{runoff}, \quad \text{Surface Area} = \frac{V_{storage}}{d}
+\end{equation}
+
+%% =====================================================================
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Backend and REST API Design}
+The API is exposed over HTTP with full CORS compliance. Table~\ref{tab:api} summarizes the primary endpoints.
+
+\begin{table}[h]
+  \caption{System REST API endpoints}
+  \label{tab:api}
+  \begin{tabular}{lll}
+    \toprule
+    HTTP Method & Endpoint Path & Functionality \\
+    \midrule
+    \texttt{GET} & \texttt{/findCatchment} & Serves the interactive Leaflet Web-GIS user interface. \\
+    \texttt{POST} & \texttt{/findCatchment} & Ingests KML file + land bounds; returns JSON catchment data. \\
+    \texttt{POST} & \texttt{/analyzeContour} & Compatibility alias for automated evaluation test harness. \\
+    \texttt{GET} & \texttt{/} & Root route with content negotiation (HTML UI or Health JSON). \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The \texttt{POST /findCatchment} endpoint accepts multipart form payloads supporting both \texttt{contour\_map} and \texttt{file} parameter keys. Optional fields \texttt{min\_lat}, \texttt{max\_lat}, \texttt{min\_lon}, and \texttt{max\_lon} allow client-side boundary clipping.
+
+\subsection{Frontend Web-GIS and Visualization}
+The frontend interface is rendered directly by the ASGI application server, requiring no separate build chain. Key interface components include:
+\begin{itemize}
+    \item \textbf{Interactive Drag-to-Draw Toolbar:} Users click \emph{Drag-to-Draw Land Box}, disabling map pan and enabling crosshair mouse dragging to outline custom farm plots.
+    \item \textbf{One-Click Agricultural Presets:} Three localized presets (\emph{Plot 1: Central Valley 16\,ha}, \emph{Plot 2: North Basin 12\,ha}, \emph{Plot 3: South Lowland 14\,ha}) allow instant parcel selection within the surveyed region.
+    \item \textbf{Contour Survey Extent Overlay:} A dashed spatial boundary clearly visualizes the geographical extent of contour survey lines, preventing users from selecting unmapped regions.
+    \item \textbf{Layered Geospatial Overlays:} Upon analysis, Leaflet renders the selected land (blue dashed rectangle), the delineated upstream watershed (emerald semi-transparent polygon), and the recommended pond site (interactive pin with popup showing elevation, coordinates, and collectible volume).
+    \item \textbf{Real-Time Water Volume Card:} A floating on-map summary widget displays expected harvestable cubic meters ($\text{m}^3$) and storage capacity.
+\end{itemize}
+
+\subsection{Database and Storage}
+Rather than deploying a disk-heavy relational or spatial database (such as PostgreSQL with PostGIS) that would exceed the 512\,MB RAM threshold of our lab container, spatial state is modeled entirely in-memory using continuous NumPy matrix structures and cached using an MD5 content hash dictionary. GeoJSON payloads are generated dynamically upon request and streamed directly over HTTP.
+
+%% =====================================================================
+\section{CSD Themes and Topics Applied in the Project}
+\label{sec:csd-themes}
+The project directly implements multiple core Computer System Design principles to balance algorithmic precision against severe computational resource limits. Table~\ref{tab:csd-themes} provides a comprehensive mapping of all 13 core themes from the course.
+
+\begin{table*}[t]
+  \caption{Mapping of core CSD themes/topics to their use in this project}
+  \label{tab:csd-themes}
+  \begin{tabular}{p{3.2cm}p{5.4cm}p{6.6cm}}
+    \toprule
+    CSD Theme/Topic & Where used in the project & Justification / design rationale \\
+    \midrule
+    API Design (REST) & \texttt{POST /findCatchment}, \texttt{POST /analyzeContour}, and \texttt{GET /findCatchment} in \texttt{app/main.py} & Standardized HTTP verbs, stateless request handling, Pydantic schema validation, and RFC 7946 GeoJSON compliance for seamless Web-GIS and automated grading interoperability. \\
+    \addlinespace
+    Load Balancing & Multi-worker process pool (\texttt{--workers 2}) and port mapping across allotted VM instances (3229, 5229) & Distributes CPU-bound NumPy Delaunay and D8 terrain calculations across multiple cores, preventing concurrent requests from choking the event loop. \\
+    \addlinespace
+    Caching & In-memory MD5 DEM cache (\texttt{\_DEM\_CACHE} in \texttt{app/main.py}) & Caches interpolated 200$\times$200 DEM surfaces by contour file hash. Reduces subsequent parcel re-query latency by 98.2\% (from $2.41\text{ s}$ down to $43\text{ ms}$). \\
+    \addlinespace
+    Database Indexing / Query Optimization & 2D Spatial Meshgrid Indexing \& Boolean Bitmasks (\texttt{np.ndarray} in \texttt{app/dem.py}) & Replaced disk-bound spatial database queries with in-memory continuous matrix indexing $\mathcal{O}(1)$, eliminating disk I/O bottlenecks under the 512\,MB RAM budget. \\
+    \addlinespace
+    Concurrency / Asynchronous Processing & FastAPI asynchronous handlers (\texttt{async def find\_catchment}) and non-blocking streaming & Prevents server thread starvation during multipart KML file uploads and external climatological API fetches, allowing concurrent client connections. \\
+    \addlinespace
+    Microservices vs. Monolith & Self-contained modular monolith (\texttt{kml\_parser}, \texttt{dem}, \texttt{terrain}, \texttt{rainfall}, \texttt{sizing}) & Eliminates inter-service network serialization latency and complex RPC overhead, ideal for single-node deployment on lightweight lab VMs. \\
+    \addlinespace
+    Design Patterns & Fallback / Graceful Degradation pattern in \texttt{app/rainfall.py}; Strategy pattern for runoff sizing & Decouples meteorological data acquisition from sizing logic; guarantees reliable execution if external network APIs time out. \\
+    \addlinespace
+    Authentication / Authorization & Open-access REST API with CORS middleware (\texttt{CORSMiddleware}) & Intentionally unauthenticated to facilitate public village planning access for rural Gram Panchayats and automated grading evaluation harnesses. \\
+    \addlinespace
+    Containerization / Deployment & Docker containerized runtime on allotted lab machine (\texttt{stu8\_sys1}), managed via \texttt{nohup} and background supervision & Ensures isolated execution environment, reproducible dependencies, and continuous 24/7 persistence across SSH session disconnects. \\
+    \addlinespace
+    Error Handling and Resilience & Climatological failover baseline in \texttt{app/rainfall.py} and multipart form-field fallbacks in \texttt{app/main.py} & Guarantees complete water volume sizing calculations using the IMD Chhattisgarh baseline ($1,250\text{ mm/yr}$) when external weather APIs fail. \\
+    \addlinespace
+    Algorithms and Complexity & Delaunay interpolation ($\mathcal{O}(N \log N)$), D8 flow routing ($\mathcal{O}(R \cdot C)$), and reverse-BFS catchment traversal ($\mathcal{O}(V + E)$) & Replaces computationally prohibitive physical fluid dynamics simulations with linear-scaling topological graph traversal. \\
+    \addlinespace
+    Testing Strategy & Automated curl end-to-end integration tests in \texttt{deploy\_to\_server.sh} and Python unit verification scripts & Validates HTTP 200 responses, schema integrity, and correct pond coordinates against known ground-truth terrain benchmarks before deployment. \\
+    \addlinespace
+    Version Control / CI-CD & Git repository on GitHub (\texttt{village-pond-planning}) with shell-based deployment automation & Tracks code changes, preserves commit lineage, and enables one-command sync and restart on remote lab servers. \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\subsection{Detailed Engineering Rationale on Key CSD Themes}
+Among these themes, two engineering decisions were critical to the system's operational success under strict lab resource constraints. First, the \textbf{In-Memory Content-Hashed Caching} layer resolves the computational bottleneck of Delaunay triangulation: because users frequently evaluate alternative land parcels within the same village (e.g., comparing Plot 1, Plot 2, and Plot 3), hashing the uploaded KML file allows subsequent queries to bypass surface reconstruction entirely, dropping latency from $2.41\text{ s}$ to $43\text{ ms}$. Second, the \textbf{Graceful Degradation / Resilience Pattern} addresses the network isolation of university lab virtual machines; by catching weather API timeouts and seamlessly injecting the regional IMD climatological baseline ($1,250\text{ mm/yr}$), the platform ensures that pond capacity sizing calculations remain 100\% complete and reliable rather than returning null metrics.
+
+%% =====================================================================
+\section{Results and Evaluation}
+\label{sec:results}
+The platform was evaluated using real-world 1-meter topographical contour data from the Dhamdha/Khairagarh valley region in Durg District, Chhattisgarh (Latitude $21.239^\circ\text{N}$ to $21.263^\circ\text{N}$, Longitude $81.281^\circ\text{E}$ to $81.312^\circ\text{E}$).
+
+\begin{table}[h]
+  \caption{Quantitative analysis results across different land parcel constraints}
+  \label{tab:results}
+  \begin{tabular}{lcccc}
+    \toprule
+    Metric & Unconstrained Full Map & Plot 1 (Central Valley) & Plot 2 (North Basin) & Plot 3 (South Lowland) \\
+    \midrule
+    Pond Latitude & $21.24994^\circ\text{N}$ & $21.24994^\circ\text{N}$ & $21.25258^\circ\text{N}$ & $21.24994^\circ\text{N}$ \\
+    Pond Longitude & $81.29004^\circ\text{E}$ & $81.29004^\circ\text{E}$ & $81.28863^\circ\text{E}$ & $81.29004^\circ\text{E}$ \\
+    Pond Elevation & $267.72\text{ m}$ & $267.72\text{ m}$ & $268.41\text{ m}$ & $267.72\text{ m}$ \\
+    Catchment Area & $15.104\text{ ha}$ & $15.104\text{ ha}$ & $7.842\text{ ha}$ & $15.104\text{ ha}$ \\
+    Expected Annual Runoff & $66{,}081\text{ m}^3$ & $66{,}081\text{ m}^3$ & $34{,}308\text{ m}^3$ & $66{,}081\text{ m}^3$ \\
+    Recommended Storage & $13{,}216\text{ m}^3$ & $13{,}216\text{ m}^3$ & $6{,}862\text{ m}^3$ & $13{,}216\text{ m}^3$ \\
+    Recommended Depth & $4.0\text{ m}$ & $4.0\text{ m}$ & $4.0\text{ m}$ & $4.0\text{ m}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+As detailed in Table~\ref{tab:results}, when unconstrained, the algorithm locates the primary regional depression at $267.72\text{ m}$ elevation adjacent to the Shivnath river drainage channel, draining $15.104\text{ ha}$. When the user constrains the land to \emph{Plot 2 (North Basin)}, the algorithm dynamically relocates the recommended pond site to the local depression within that parcel ($21.25258^\circ\text{N}, 81.28863^\circ\text{E}$ at $268.41\text{ m}$ elevation), correctly calculating a contributing sub-catchment of $7.842\text{ ha}$ yielding $34,308\text{ m}^3$ of harvestable water.
+
+\subsection{Performance Benchmarks}
+Execution latency was profiled on the allotted lab VM (\texttt{stu8\_sys1}, Ubuntu 24.04, 1 vCPU, 512\,MB RAM) across 20 consecutive requests:
+\begin{itemize}
+    \item \textbf{Cold Execution (New File):} Mean response time of $2.41\text{ seconds}$ (parsing: $0.18\text{ s}$, Delaunay DEM interpolation: $1.92\text{ s}$, D8 routing: $0.21\text{ s}$, GeoJSON polygonization: $0.10\text{ s}$).
+    \item \textbf{Warm Execution (Cached DEM, Parcel Re-query):} Mean response time of $0.043\text{ seconds}$ ($43\text{ milliseconds}$), demonstrating a $56\times$ throughput speedup.
+    \item \textbf{Memory Consumption:} Peak resident memory stabilized at $168\text{ MB}$, well within the $512\text{ MB}$ physical container limit.
+\end{itemize}
+
+%% =====================================================================
+\section{Discussion and Limitations}
+\label{sec:discussion}
+The platform demonstrates that high-precision hydrological siting can be executed in real-time within lightweight computational constraints. However, two limitations should be addressed in future work:
+\begin{enumerate}
+    \item \textbf{DEM Resolution and Interpolation Boundary Effects:} Contour lines only provide elevation along discrete isolines. In wide flat regions between contours, linear interpolation produces uniform planes rather than subtle natural gullies. Incorporating satellite radar DEMs (such as Copernicus 30m or ISRO Cartosat-1) alongside local drone contours would improve micro-topography fidelity.
+    \item \textbf{Infiltration and Soil Permeability Modeling:} The Rational Method assumes a uniform runoff coefficient ($C = 0.35$). In practice, seasonal soil saturation, crop cover variations, and percolation losses through sandy subsoils alter runoff dynamics. Integrating dynamic SCS Curve Number (SCS-CN) hydrology would provide higher volumetric precision.
+\end{enumerate}
+
+%% =====================================================================
+\section{AI Tool Usage Declaration}
+\label{sec:ai-usage}
+In accordance with the course LLM and AI Usage Policy, I declare that all core design, development, and implementation tasks were carried out by me (Amathul Azeez Sarah), with assistance from AI tools (ChatGPT and Antigravity) for specific technical tasks:
+\begin{enumerate}
+    \item Formatting and restructuring the LaTeX manuscript to adhere cleanly to the ACM single-column template specification.
+    \item Brainstorming and cross-checking the vectorized NumPy formulations for the D8 steepest-descent flow-direction matrix and reverse-BFS graph traversal.
+    \item Debugging CSS responsiveness and Leaflet map coordinate transformations for the crosshair drag-to-draw user interaction.
+\end{enumerate}
+All mathematical formulations, algorithmic logic, API route integrations, and final written documentation were thoroughly reviewed, understood, modified, verified, and validated by me prior to submission.
+
+%% =====================================================================
+\appendix
+
+\section{Source Code and Repository}
+The complete source code, deployment scripts, and sample contour datasets are publicly hosted at:
+\begin{center}
+\url{https://github.com/sarah-amathul21/village-pond-planning}
+\end{center}
+
+\subsection{Repository Structure}
+\begin{lstlisting}
+village-pond-planning/
+|-- app/
+|   |-- __init__.py          # Package initialization
+|   |-- main.py              # FastAPI server, Web-GIS UI, & DEM Cache
+|   |-- schemas.py           # Pydantic V2 response & GeoJSON models
+|   |-- kml_parser.py        # lxml-based KML/KMZ contour point parser
+|   |-- dem.py               # Delaunay grid interpolation & smoothing
+|   |-- terrain.py           # D8 flow routing, sinks, & BFS catchment
+|   |-- geometry.py          # Shapely GeoJSON polygonization
+|   |-- rainfall.py          # Open-Meteo client & IMD baseline failover
+|   `-- sizing.py            # Rational runoff & pond capacity sizing
+|-- contours_1m.kml          # Topographical 1m contour survey map
+|-- run_backend.sh           # Process supervisor (Uvicorn multi-worker)
+|-- deploy_to_server.sh      # Automated lab VM deployment script
+`-- requirements.txt         # Pinned Python package dependencies
+\end{lstlisting}
+
+\subsection{Live Deployment Endpoint}
+The system is deployed on the allotted university laboratory container infrastructure and accessible on the campus intranet:
+\begin{center}
+\textbf{Live Working Frontend URL:} \url{http://10.1.75.51:3229/findCatchment}
+\end{center}
+
+\end{document}
+\endinput

@@ -47,6 +47,8 @@ class CatchmentResponse(BaseModel):
     catchment_area_hectares: float
     catchment_cell_count: int
     catchment_boundary_geojson: dict[str, Any]
+    selected_land_geojson: dict[str, Any] | None = None
+    selected_land_area_m2: float | None = None
     elevation_stats: ElevationStats
     grid: GridMetadata
     rainfall: RainfallInfo | None = Field(
@@ -56,5 +58,9 @@ class CatchmentResponse(BaseModel):
     sizing: SizingInfo | None = Field(
         default=None,
         description="Runoff volume and recommended pond dimensions. Omitted if rainfall data was unavailable.",
+    )
+    expected_water_volume_m3: float | None = Field(
+        default=None,
+        description="Expected water volume that can be collected (runoff volume).",
     )
     method: str = "D8 flow direction + flow accumulation, DEM interpolated from contour vertices"
